@@ -1,3 +1,10 @@
 fastapi==0.141.1 
 pydantic==2.13.4 
 uvicorn==0.52.3
+
+duckdb==1.5.5
+polars==1.43.2
+python-dotenv==1.2.2
+
+numpy==2.5.2
+pandas==3.0.5

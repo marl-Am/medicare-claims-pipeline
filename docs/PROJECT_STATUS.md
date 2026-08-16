@@ -23,23 +23,23 @@ A FastAPI + PostgreSQL pipeline for Medicare provider data, containerized with D
 ## Day 1 — Get and process the data
 
 - [X] Download the dataset: [Medicare Physician & Other Practitioners by Provider and Service](https://data.cms.gov/provider-summary-by-type-of-service/medicare-physician-other-practitioners/medicare-physician-other-practitioners-by-provider-and-service) — grab 2-3 recent years for a schema-drift problem worth writing about
-- [ ] Open a sample in DuckDB or Polars to inspect columns before writing any cleaning logic
-- [ ] Write the ingestion script: typed functions, mypy-checked, load raw file(s)
-- [ ] Write cleaning logic: handle nulls, redacted rows, inconsistent codes across years
-- [ ] Write aggregation logic: totals by procedure code, by state, by year
-- [ ] Write output step: save cleaned results to Parquet locally
-- [ ] Test the pipeline against a small subset before running the full file
+- [X] Open a sample in DuckDB or Polars to inspect columns before writing any cleaning logic
+- [X] Write the ingestion script: typed functions, mypy-checked, load raw file(s)
+- [X] Write cleaning logic: handle nulls, redacted rows, inconsistent codes across years
+- [X] Write aggregation logic: totals by procedure code, by state, by year
+- [X] Write output step: save cleaned results to Parquet locally
+- [X] Test the pipeline against a small subset before running the full file
 
 ## Day 1 — API and local database
 
-- [ ] Write `docker-compose.yml` for a local Postgres container
-- [ ] Define SQLAlchemy models matching the cleaned schema, fully typed
-- [ ] Write FastAPI query endpoints (filter by state, procedure code, year)
-- [ ] Run locally to test — Integrated Terminal, project root:
+- [X] Write `docker-compose.yml` for a local Postgres container
+- [X] Define SQLAlchemy models matching the cleaned schema, fully typed
+- [X] Write FastAPI query endpoints (filter by state, procedure code, year)
+- [X] Run locally to test — Integrated Terminal, project root:
   ```
   uvicorn app.main:app --reload
   ```
-- [ ] Load the processed Parquet output into local Postgres, confirm queries return correct results
+- [X] Load the processed Parquet output into local Postgres, confirm queries return correct results
 
 ## Day 1 — Containerize
 

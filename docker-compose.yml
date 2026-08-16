@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: pg-medicare
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DB}
+    ports:
+      - "${PG_PORT}:5432"
+    volumes:
+      - pg-medicare-data:/var/lib/postgresql/data
+
+volumes:
+  pg-medicare-data:
+    external: true
