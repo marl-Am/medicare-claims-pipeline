@@ -14,7 +14,6 @@ class StateSummary(BaseModel):
     claim_year: int
     state: str
     row_count: int
-    suppressed_count: int
     total_beneficiaries: int | None
     total_services: float | None
     total_medicare_payment: float | None
@@ -27,7 +26,6 @@ class HcpcsSummary(BaseModel):
     hcpcs_code: str
     hcpcs_description: str | None
     row_count: int
-    suppressed_count: int
     total_beneficiaries: int | None
     total_services: float | None
     total_medicare_payment: float | None

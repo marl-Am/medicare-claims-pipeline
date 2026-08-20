@@ -7,6 +7,7 @@ connection details from the same .env file used by pipeline.py.
 
 import os
 from collections.abc import AsyncGenerator
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import (
@@ -24,8 +25,12 @@ pg_db: str = os.environ["PG_DB"]
 pg_user: str = os.environ["PG_USER"]
 pg_password: str = os.environ["PG_PASSWORD"]
 
+# The user and password are percent-encoded before going into the URL. A
+# generated password containing @, /, :, or # would otherwise be parsed as URL
+# structure and the connection would fail with a misleading error.
 DATABASE_URL: str = (
-    f"postgresql+asyncpg://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}"
+    f"postgresql+asyncpg://{quote_plus(pg_user)}:{quote_plus(pg_password)}"
+    f"@{pg_host}:{pg_port}/{pg_db}"
 )
 
 engine: AsyncEngine = create_async_engine(DATABASE_URL, echo=False)
