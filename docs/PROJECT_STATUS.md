@@ -68,9 +68,9 @@ FastAPI serves them. Everything runs under Docker Compose.
 - [X] Load 2023 and confirm `claim_year` separates the results correctly —
       verified via `GET /claims/summary/by-state?state=CA`, which returned one
       row per year with different totals
-- [ ] Reload both years now that `is_suppressed`/`suppressed_count` are gone and
-      `ANALYZE` runs after each load. The database currently holds the
-      pre-cleanup schema.
+- [X] Reload both years under the current schema (no `is_suppressed`/
+      `suppressed_count`, `ANALYZE` after load). Row counts match the prior
+      run exactly: 19,442,320 combined, 124 states, 12,876 HCPCS codes.
 
 ## Stage 5 — Containerize
 

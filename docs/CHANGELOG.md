@@ -6,10 +6,10 @@ Build ProviderPulse, a data pipeline and query API for Medicare provider payment
 records, using DuckDB, PostgreSQL, FastAPI, and Docker. The API serves
 pre-aggregated summaries that anyone can query over HTTP.
 
-Both years have been loaded and queried successfully: 2024 (9,781,673 rows)
-and 2023 (9,660,647 rows), 19,442,320 combined. A reload is pending under the
-current schema — see Stage 4 in the checklist. CMS publishes 2019 through
-2024; the remaining years are optional and add nothing beyond volume.
+Both years are loaded under the current schema and queried successfully: 2024
+(9,781,673 rows) and 2023 (9,660,647 rows), 19,442,320 combined. CMS publishes
+2019 through 2024; the remaining years are optional and add nothing beyond
+volume.
 
 ## 2. Key Decisions & Agreements
 
@@ -50,7 +50,13 @@ current schema — see Stage 4 in the checklist. CMS publishes 2019 through
   `postgres_execute` passthrough. Added after the 2023 load's summary rebuild
   took roughly 28x longer than 2024's for 2x the data — a jump consistent with
   Postgres's query planner working from statistics that predated the bulk
-  insert. Not yet validated against a real reload; see Stage 4.
+  insert. On the next reload, the equivalent step dropped from 50m06s to
+  4m54s (roughly 10x) for the state summary and from 13m22s to 4m55s (roughly
+  2.7x) for the HCPCS summary. Not a fully isolated result: about 11 hours
+  elapsed between the two runs, long enough for Postgres's own autovacuum to
+  have analyzed the table independently of this call. Either way the
+  diagnosis holds, and the explicit call means fresh statistics don't depend
+  on autovacuum's timing.
 - **File paths moved from hardcoded strings to `.env`** (`DATA_ROOT`,
   `CLAIM_YEAR_DIR`, `CSV_FILENAME`). Absolute paths under `C:\Users\marlo\` would
   not resolve inside a container. Values are left unquoted so Docker Compose
@@ -135,20 +141,28 @@ current schema — see Stage 4 in the checklist. CMS publishes 2019 through
   and `GET /claims/summary/by-state?state=CA` returned one row per year with
   distinct, correct totals — confirming the full DuckDB → Postgres →
   SQLAlchemy → FastAPI chain across more than one loaded year.
-- Combined real-data run before the suppression cleanup: `cleaned_claims` at
-  19,442,320 rows, `summary_by_state` at 124 rows (62 states × 2 years),
-  `summary_by_hcpcs` at 12,876 rows. This state predates the `is_suppressed`
-  removal and the `ANALYZE` addition; a fresh reload is pending.
+- Reloaded both years under the current schema (suppression columns removed,
+  `ANALYZE` in place). Row counts match the earlier run exactly:
+  `cleaned_claims` at 19,442,320, `summary_by_state` at 124 rows (62 states ×
+  2 years), `summary_by_hcpcs` at 12,876 rows — matching counts under a
+  changed schema is good evidence the column removal didn't disturb the
+  underlying grouping.
 
 **Real pipeline timings (Windows, local Docker Postgres):**
-- 2024, first load: 22m15s total — CSV→Parquet 1m03s, Postgres load 11m29s,
-  state summary 1m48s, HCPCS summary 2m21s, export 4m29s.
-- 2023, second load (append path): 1h21m43s total — CSV→Parquet 37s, Postgres
-  load 9m47s, state summary 50m06s, HCPCS summary 13m22s, export 5m22s.
-- The state summary step took roughly 28x longer for 2x the data — sharply
-  non-linear, and the direct motivation for adding `ANALYZE` after the load.
-  Not yet confirmed whether it fixes the gap; that's the first thing to watch
-  on the next reload.
+- 2024, first load (pre-cleanup): 22m15s total — CSV→Parquet 1m03s, Postgres
+  load 11m29s, state summary 1m48s, HCPCS summary 2m21s, export 4m29s.
+- 2023, second load (pre-cleanup, append path): 1h21m43s total — CSV→Parquet
+  37s, Postgres load 9m47s, state summary 50m06s, HCPCS summary 13m22s,
+  export 5m22s. The state summary step took roughly 28x longer for 2x the
+  data, which motivated adding `ANALYZE`.
+- 2024, reload (post-cleanup, with `ANALYZE`): load 11m25s, state summary
+  4m03s, HCPCS summary 3m45s, `ANALYZE` 1m50s. Slower on the summary steps
+  than the original 2024-only run despite identical row counts — ordinary
+  run-to-run variance, a reminder not to read a single timing too literally.
+- 2023, reload (post-cleanup, with `ANALYZE`): load 7m36s, state summary
+  4m54s, HCPCS summary 4m55s, `ANALYZE` 55s. Roughly 10x and 2.7x faster than
+  the pre-`ANALYZE` equivalents above, though about 11 hours separated the
+  two runs, long enough for autovacuum to have contributed independently.
 
 **Key data-quality notes surfaced:**
 - CMS excludes any provider-service record derived from 10 or fewer
@@ -166,9 +180,6 @@ current schema — see Stage 4 in the checklist. CMS publishes 2019 through
 
 ## 4. Action Items & Next Steps
 
-- Reload both years under the current schema (no `is_suppressed`/
-  `suppressed_count`, `ANALYZE` after load). Watch the state summary step —
-  this is the first real test of whether `ANALYZE` closes the timing gap.
 - Push the repository to GitHub. Verify `.gitignore` excludes `data/`,
   `*.parquet`, `.env`, `.venv/`, and the cache folders before the first commit.
 - Write a Dockerfile for the FastAPI app (pinned base image, non-root user).
