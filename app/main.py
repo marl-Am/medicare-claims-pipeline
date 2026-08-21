@@ -5,15 +5,24 @@ FastAPI entrypoint. Exposes query endpoints over the pre-aggregated
 summary_by_state and summary_by_hcpcs tables.
 """
 
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated, Final
 
-from fastapi import Depends, FastAPI, Query
-from sqlalchemy import select
+from fastapi import Depends, FastAPI, Query, Response
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.database import get_db, pg_db, pg_host, pg_port
 from app.models import SummaryByHcpcs, SummaryByState
 from app.schemas import HcpcsSummary, StateSummary
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # Deliberately duplicated from ingestion/pipeline.py rather than imported.
 # The API container has no reason to depend on the ingestion package, and
@@ -37,7 +46,24 @@ YearQuery = Annotated[
     ),
 ]
 
-app = FastAPI(title="ProviderPulse", description="Medicare provider payment query API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    logger.info(
+        "ProviderPulse API starting up, database target %s:%s/%s",
+        pg_host,
+        pg_port,
+        pg_db,
+    )
+    yield
+    logger.info("ProviderPulse API shutting down")
+
+
+app = FastAPI(
+    title="ProviderPulse",
+    description="Medicare provider payment query API",
+    lifespan=lifespan,
+)
 
 
 @app.get("/claims/summary/by-state", response_model=list[StateSummary])
@@ -60,7 +86,14 @@ async def get_summary_by_state(
         query = query.where(SummaryByState.state == state.upper())
 
     result = await db.execute(query)
-    return list(result.scalars().all())
+    rows = list(result.scalars().all())
+    logger.info(
+        "by-state query: year=%s state=%s -> %d rows",
+        year,
+        state.upper() if state else None,
+        len(rows),
+    )
+    return rows
 
 
 @app.get("/claims/summary/by-hcpcs", response_model=list[HcpcsSummary])
@@ -82,9 +115,27 @@ async def get_summary_by_hcpcs(
         query = query.where(SummaryByHcpcs.hcpcs_code == hcpcs_code.upper())
 
     result = await db.execute(query)
-    return list(result.scalars().all())
+    rows = list(result.scalars().all())
+    logger.info(
+        "by-hcpcs query: year=%s hcpcs_code=%s -> %d rows",
+        year,
+        hcpcs_code.upper() if hcpcs_code else None,
+        len(rows),
+    )
+    return rows
 
 
 @app.get("/health")
-async def health_check() -> dict[str, str]:
+async def health_check(
+    response: Response, db: AsyncSession = Depends(get_db)
+) -> dict[str, str]:
+    try:
+        await db.execute(text("SELECT 1"))
+    except Exception:
+        # Broad by design: a health probe's job is to report any failure
+        # reaching the database as unhealthy, not to distinguish causes.
+        # The cause goes to the log, not the response body.
+        logger.exception("Health check failed: database unreachable")
+        response.status_code = 503
+        return {"status": "error", "detail": "database unreachable"}
     return {"status": "ok"}

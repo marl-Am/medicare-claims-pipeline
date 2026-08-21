@@ -108,18 +108,24 @@ FastAPI serves them. Everything runs under Docker Compose.
       pipeline, models, and schemas.
 - [X] Add `ANALYZE` after the bulk load, so Postgres's query planner has
       current statistics before the summary rebuild runs against it
-- [ ] Fix `main()`'s call order. `analyze_cleaned_claims()` currently runs
-      after both summary rebuilds instead of before them, so the statistics
-      refresh never helps the run it's part of. Confirmed cost on the last
-      real run: HCPCS summary took 80m49s instead of a 4m55s benchmark.
-      Corrected `main()` written and passes `mypy --strict`; still needs to
-      be copied into the project and confirmed with a fresh timed run before
-      this is checked off for real.
-- [ ] Add structured logging to the API. The pipeline already uses `logging`;
-      the API logs nothing.
-- [ ] Add a `/health` check that confirms the database connection, not just the process
-- [ ] Push the repository to GitHub. Confirm `.gitignore` excludes `data/`,
-      `*.parquet`, `.env`, `.venv/`, and the cache folders before the first commit.
+- [X] Fix `main()`'s call order. `analyze_cleaned_claims()` was running
+      after both summary rebuilds instead of before them. Confirmed fixed
+      by a real timed reload: state summary 4m21s (was 91m34s, benchmark
+      4m54s), HCPCS summary 3m51s (was 80m49s, benchmark 4m55s). Both now
+      land at or better than benchmark. `ANALYZE` logs between the load and
+      the first summary rebuild, exactly where it belongs.
+- [X] Add structured logging to the API. `main.py` now logs on startup and
+      shutdown, and after every query, the filters applied and rows
+      returned. Verified with `mypy --strict` against the real installed
+      `sqlalchemy`/`asyncpg`, no live test needed for this half.
+- [X] Add a `/health` check that confirms the database connection, not just
+      the process. Runs a real `SELECT 1` through `get_db()`; verified live
+      against an unreachable database, correctly returns 503 with a generic
+      body while the full error goes to the log, not the response.
+- [X] Push the repository to GitHub. `.gitignore` had two stray lines
+      (`data.txt`, `requirements-dev.txt`) silently excluding real project
+      files; fixed, `docs/data.txt` restored, `git status --ignored` came
+      back clean before the push
 - [X] Write the README: architecture, data source, setup steps, the CMS
       suppression-by-omission finding, the `"XX"` state code, plus record
       counts and query timings. One placeholder to fill in yourself:

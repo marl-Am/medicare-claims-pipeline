@@ -174,8 +174,11 @@ volume.
   calls the individual stage functions directly instead of `run_pipeline()`,
   with `analyze_cleaned_claims()` inserted between the load and the summary
   rebuilds. `run_pipeline()` itself is untouched, so the test that exercises
-  it end to end is unaffected. Passes `mypy --strict`; not yet confirmed by
-  a real timed run, see Action Items.
+  it end to end is unaffected. Confirmed by a real timed reload: state
+  summary 4m21s and HCPCS summary 3m51s, both at or better than their old
+  benchmarks (4m54s, 4m55s) and nowhere near the 91m34s / 80m49s the same
+  two steps took under the bug. All 89 tests pass against the corrected
+  file.
 
 ## 3. Main Takeaways / Output
 
@@ -186,7 +189,7 @@ volume.
 - `app/models.py` — SQLAlchemy models (`SummaryByState`, `SummaryByHcpcs`) with composite primary keys (`claim_year` + `state`/`hcpcs_code`).
 - `app/schemas.py` — Pydantic response schemas (`StateSummary`, `HcpcsSummary`) using `ConfigDict(from_attributes=True)`.
 - `app/database.py` — async SQLAlchemy engine/session setup using `asyncpg`, with a `get_db()` FastAPI dependency.
-- `app/main.py` — FastAPI app with `GET /claims/summary/by-state`, `GET /claims/summary/by-hcpcs` (both filterable and validated), and `GET /health`.
+- `app/main.py` — FastAPI app with `GET /claims/summary/by-state`, `GET /claims/summary/by-hcpcs` (both filterable, validated, and logged), and `GET /health` (checks the database, not just the process).
 - `conftest.py` — project-root file that fixes the import path and supplies placeholder database credentials for tests.
 - `tests/test_pipeline.py` — 54 tests covering year derivation, multi-year append/idempotency, aggregation arithmetic, injection guards, type-inference guards, and a full pipeline run.
 - `tests/test_api.py` — 35 tests covering both endpoints, filter combinations, null handling, input rejection, and the OpenAPI surface.
@@ -225,6 +228,17 @@ volume.
   `summary_by_state` 124, `summary_by_hcpcs` 12,876, claim year 2023 at
   9,660,647 and 2024 at 9,781,673. Slow (see timings below) for the
   ANALYZE-ordering reason above, not incorrect.
+- **Structured logging added to `app/main.py`; `/health` now checks the
+  database.** A `lifespan` handler logs the connection target on startup and
+  a shutdown line on exit; both summary endpoints log the filters applied
+  and rows returned. `/health` runs a real `SELECT 1` through the same
+  `get_db()` dependency every other endpoint uses. Verified with
+  `mypy --strict` against the exact `sqlalchemy==2.0.52` and
+  `asyncpg==0.31.0` this project's build installs, and with a live run
+  pointed at an unreachable database: correctly returned 503 with a generic
+  body (`{"status": "error", "detail": "database unreachable"}`), full
+  traceback went to the server log, not the response. `database.py`,
+  `models.py`, and `schemas.py` needed no changes.
 
 **Real pipeline timings (Windows, local Docker Postgres):**
 - 2024, first load (pre-cleanup): 22m15s total — CSV→Parquet 1m03s, Postgres
@@ -248,6 +262,16 @@ volume.
   HCPCS summary 4m55s), consistent with ANALYZE running after both rebuilds
   instead of before them. ANALYZE itself ran at normal speed (58s vs. a 55s
   benchmark), since it doesn't depend on the statistics it refreshes.
+- 2023, second containerized reload (`Dockerfile.pipeline`, ANALYZE fix
+  applied): load 38m45s, ANALYZE 10s, state summary 4m21s, HCPCS summary
+  3m51s, total 48m41s. Both summary steps landed at or better than
+  benchmark, confirming the fix. The load step itself ran slower than the
+  previous containerized run (24m53s), not faster; ANALYZE still runs after
+  the load rather than before it, so this step's own plan quality wasn't
+  what the fix targeted. Given the gap here is far smaller than the 16 to
+  19x seen above, this reads as ordinary run-to-run variance rather than a
+  distinct problem, though that's not confirmed against a second data
+  point.
 
 **Key data-quality notes surfaced:**
 - CMS excludes any provider-service record derived from 10 or fewer
@@ -265,17 +289,7 @@ volume.
 
 ## 4. Action Items & Next Steps
 
-- Copy the corrected `pipeline.py` into the project (`main()`'s call order
-  fix, written and `mypy --strict` clean) and re-run the pipeline to confirm
-  the state and HCPCS summary steps return to roughly their old benchmarks
-  (under 5 minutes each).
-- Add structured logging to the API. The pipeline already uses `logging`; the
-  API does not log anything yet.
-- Extend `/health` to confirm the database connection rather than only reporting
-  that the process is alive.
-- Push the repository to GitHub. Verify `.gitignore` excludes `data/`,
-  `*.parquet`, `.env`, `.venv/`, and the cache folders before the first commit.
-- README written (`README.md`), covering architecture, data source, setup
-  steps, the CMS suppression-by-omission finding, the `"XX"` state code, and
-  record counts and query timings. Needs the `<repo-url>` placeholder
-  filled in and a read-through.
+Every item on PROJECT_STATUS.md's checklist is closed out as of this entry.
+Nothing left open. Worth an eye if it comes up again, though not urgent
+enough to be an action item on its own: the load step's run-to-run timing
+(24m53s, then 38m45s on the very next containerized reload), noted above.
