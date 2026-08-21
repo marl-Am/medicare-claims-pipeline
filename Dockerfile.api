@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+
+# --- Build stage: install dependencies into an isolated venv --------------
+FROM python:3.12-slim-bookworm AS builder
+
+WORKDIR /build
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements-api.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements-api.txt
+
+# --- Runtime stage: only the venv and app code, nothing used to build it --
+FROM python:3.12-slim-bookworm AS runtime
+
+# Non-root user (OWASP A05/A01 — the process never needs root once it's
+# just serving HTTP requests against Postgres).
+RUN groupadd --gid 1000 appuser \
+    && useradd --uid 1000 --gid appuser --shell /usr/sbin/nologin --create-home appuser
+
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+COPY --chown=appuser:appuser app/ ./app/
+
+USER appuser
+
+EXPOSE 8000
+
+# Hits the existing /health endpoint. Stdlib only, since curl/wget aren't
+# installed in the slim image and there's no reason to add them just for this.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=2).status == 200 else 1)"
+
+# No --reload: that flag is for local dev (file-watcher, auto-restart on
+# save). A container gets rebuilt on change instead.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

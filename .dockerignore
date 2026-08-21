@@ -1,0 +1,21 @@
+# Keep secrets, local environments, caches, and the (multi-GB) raw data
+# files out of the build context entirely — not just out of the final
+# image, out of what gets sent to the Docker daemon at all.
+
+.env
+.venv/
+.git/
+.gitignore
+
+**/__pycache__/
+**/*.pyc
+.mypy_cache/
+.pytest_cache/
+
+data/
+*.parquet
+
+docs/
+README.md
+tests/
+conftest.py

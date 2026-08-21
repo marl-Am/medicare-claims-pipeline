@@ -11,6 +11,50 @@ services:
       - "${PG_PORT}:5432"
     volumes:
       - pg-medicare-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d ${PG_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: providerpulse-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DB: ${PG_DB}
+      PG_USER: ${PG_USER}
+      PG_PASSWORD: ${PG_PASSWORD}
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    container_name: providerpulse-pipeline
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DB: ${PG_DB}
+      PG_USER: ${PG_USER}
+      PG_PASSWORD: ${PG_PASSWORD}
+      DATA_ROOT: /data
+      CLAIM_YEAR_DIR: ${CLAIM_YEAR_DIR}
+      CSV_FILENAME: ${CSV_FILENAME}
+    volumes:
+      - ./data:/data
+    profiles: ["pipeline"]
 
 volumes:
   pg-medicare-data:

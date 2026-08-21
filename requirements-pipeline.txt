@@ -1,0 +1,8 @@
+# Runtime dependencies for the ingestion pipeline (Dockerfile.pipeline).
+# Matches ingestion/pipeline.py's actual imports: duckdb and python-dotenv,
+# nothing else. No pandas/numpy/polars — pipeline.py doesn't import any of
+# them, consistent with the CHANGELOG's "DuckDB rather than pandas" decision.
+# If inspect_csv.py or export_cleaned.py turn out to need one, add it here.
+
+duckdb==1.5.5
+python-dotenv==1.2.2

@@ -118,6 +118,64 @@ volume.
   `FILTER (WHERE NOT is_suppressed)` matching 100% of rows was already the
   correct result, not a symptom of a bug. Reference:
   https://data.cms.gov/resources/medicare-physician-other-practitioners-methodology-2022
+- **Dependencies split into `requirements-api.txt` / `requirements-pipeline.txt`.**
+  The original `requirements.txt` mixed API and pipeline packages in one file,
+  so a naive Dockerfile install would put DuckDB in the API image, working
+  against the "keep DuckDB out of the API image" decision above.
+  `requirements.txt` and `requirements-dev.txt` now just reference the two
+  split files via `-r`, so the local `.venv` workflow installs the same set
+  it always did. `pipeline.py`'s own imports (`duckdb`, `dotenv`, nothing
+  else) confirmed what belongs in `requirements-pipeline.txt`; `numpy`,
+  `pandas`, and `polars` stayed in the top-level `requirements.txt` rather
+  than being deleted outright, since `inspect_csv.py`, `export_cleaned.py`,
+  and the tests haven't been checked against them.
+- **`sqlalchemy[asyncio]` and `asyncpg` were missing from every requirements
+  file.** `app/database.py` depends on both, and the original Setup step
+  installed them directly into the `.venv`, but neither package was ever
+  added to `requirements.txt`. A container build from a clean
+  `requirements-api.txt` would have failed with `ModuleNotFoundError`. Now
+  pinned to `sqlalchemy==2.0.52` and `asyncpg==0.31.0`, confirmed via
+  `pip show` against the local `.venv` to match what was already proven
+  working.
+- **`Dockerfile.api` and `Dockerfile.pipeline` use a two-stage build** on
+  `python:3.12-slim-bookworm`. Dependencies install into a venv in a builder
+  stage; only that venv and the relevant source directory (`app/` or
+  `ingestion/`) get copied into the final image. Both run as a non-root user.
+- **`docker-compose.yml`'s `postgres` service gained a `healthcheck`** using
+  `pg_isready`, with `api` and `pipeline` depending on it through
+  `condition: service_healthy` rather than just container start. A started
+  Postgres container and an accepting-connections database are not the same
+  moment.
+- **`api` and `pipeline` reach Postgres at `PG_HOST=postgres`,
+  `PG_PORT=5432`**, hardcoded in `docker-compose.yml` rather than read from
+  `.env`. `${PG_PORT}` in `.env` is the host-facing port; containers on the
+  compose network reach postgres on its actual container port, 5432,
+  regardless of that mapping.
+- **`Dockerfile.pipeline` pre-fetches DuckDB's `postgres` extension at build
+  time**, running the same `INSTALL postgres; LOAD postgres;` statement
+  `attach_postgres()` runs at load time, as the same non-root user the
+  container runs as later. Without this, the first real pipeline run inside
+  a container would need outbound internet access to DuckDB's extension
+  repository, not only to the `postgres` service on the compose network.
+- **`pipeline` carries `profiles: ["pipeline"]`** in `docker-compose.yml`, so
+  it does not start on a plain `docker compose up`. It runs once and exits by
+  design. Targeting it explicitly, `docker compose run --rm pipeline`, still
+  works regardless of the profile.
+- **Found: `analyze_cleaned_claims()` runs after both summary rebuilds, not
+  before.** `main()` calls `run_pipeline()` (load, then
+  `create_summary_by_state`, then `create_summary_by_hcpcs`, then export) as
+  one block, and only calls `analyze_cleaned_claims()` once that block
+  returns. Confirmed directly against the first containerized 2023 reload:
+  `Ran ANALYZE` logged at 23:36:56, after `Rebuilt pg.summary_by_state` at
+  22:15:09 and `Rebuilt pg.summary_by_hcpcs` at 23:35:59. This reframes the
+  ANALYZE decision above: the "10x faster" comparison documented there
+  carried an 11-hour gap between runs, and autovacuum most likely did the
+  real work in that gap, not the explicit call. Fixed in `main()`: it now
+  calls the individual stage functions directly instead of `run_pipeline()`,
+  with `analyze_cleaned_claims()` inserted between the load and the summary
+  rebuilds. `run_pipeline()` itself is untouched, so the test that exercises
+  it end to end is unaffected. Passes `mypy --strict`; not yet confirmed by
+  a real timed run, see Action Items.
 
 ## 3. Main Takeaways / Output
 
@@ -132,7 +190,12 @@ volume.
 - `conftest.py` — project-root file that fixes the import path and supplies placeholder database credentials for tests.
 - `tests/test_pipeline.py` — 54 tests covering year derivation, multi-year append/idempotency, aggregation arithmetic, injection guards, type-inference guards, and a full pipeline run.
 - `tests/test_api.py` — 35 tests covering both endpoints, filter combinations, null handling, input rejection, and the OpenAPI surface.
-- `docker-compose.yml` — defines the Postgres 16 container (`pg-medicare`) using `.env` values and the external `pg-medicare-data` volume.
+- `docker-compose.yml` — defines the Postgres 16 container (`pg-medicare`), the `api` and `pipeline` services, and the external `pg-medicare-data` volume, using `.env` values.
+- `Dockerfile.api` — two-stage build for the FastAPI service, non-root user, `HEALTHCHECK` against `/health`.
+- `Dockerfile.pipeline` — two-stage build for the ingestion pipeline, non-root user, pre-fetches DuckDB's postgres extension at build time.
+- `.dockerignore` — keeps `.env`, `.venv/`, `data/`, and the cache folders out of both build contexts.
+- `requirements-api.txt` / `requirements-pipeline.txt` — per-image dependency lists split out of `requirements.txt`.
+- `README.md` — architecture, data source, setup, the API surface, both data-quality findings, current record counts, and typical pipeline timings.
 
 **Confirmed working end to end:**
 - `mypy --strict` passes cleanly across all source files.
@@ -147,6 +210,21 @@ volume.
   2 years), `summary_by_hcpcs` at 12,876 rows — matching counts under a
   changed schema is good evidence the column removal didn't disturb the
   underlying grouping.
+- **The API runs successfully inside Docker Compose.** `docker compose up
+  --build` built the API image, started Postgres against the existing
+  `pg-medicare-data` volume, and waited for Postgres's healthcheck before
+  starting the API. Docker's own `HEALTHCHECK` passed repeatedly against
+  `/health`, and a request from outside the container,
+  `GET /claims/summary/by-state?state=CA`, returned 200 against the
+  already-loaded 2023/2024 data.
+- **`Dockerfile.pipeline` build-tested against a real reload.**
+  `docker compose run --rm pipeline` built the image, the DuckDB postgres
+  extension pre-fetch worked without needing runtime internet access, and
+  the 2023 reload completed with counts matching the last verified
+  non-containerized run exactly: `cleaned_claims` 19,442,320,
+  `summary_by_state` 124, `summary_by_hcpcs` 12,876, claim year 2023 at
+  9,660,647 and 2024 at 9,781,673. Slow (see timings below) for the
+  ANALYZE-ordering reason above, not incorrect.
 
 **Real pipeline timings (Windows, local Docker Postgres):**
 - 2024, first load (pre-cleanup): 22m15s total — CSV→Parquet 1m03s, Postgres
@@ -163,6 +241,13 @@ volume.
   4m54s, HCPCS summary 4m55s, `ANALYZE` 55s. Roughly 10x and 2.7x faster than
   the pre-`ANALYZE` equivalents above, though about 11 hours separated the
   two runs, long enough for autovacuum to have contributed independently.
+- 2023, first containerized reload (`Dockerfile.pipeline`, ANALYZE still
+  misordered): load 24m53s, state summary 91m34s, HCPCS summary 80m49s,
+  ANALYZE 58s, total 3h19m. Both summary steps ran roughly 16 to 19x slower
+  than the last non-containerized 2023 benchmark (state summary 4m54s,
+  HCPCS summary 4m55s), consistent with ANALYZE running after both rebuilds
+  instead of before them. ANALYZE itself ran at normal speed (58s vs. a 55s
+  benchmark), since it doesn't depend on the statistics it refreshes.
 
 **Key data-quality notes surfaced:**
 - CMS excludes any provider-service record derived from 10 or fewer
@@ -180,14 +265,17 @@ volume.
 
 ## 4. Action Items & Next Steps
 
-- Push the repository to GitHub. Verify `.gitignore` excludes `data/`,
-  `*.parquet`, `.env`, `.venv/`, and the cache folders before the first commit.
-- Write a Dockerfile for the FastAPI app (pinned base image, non-root user).
-- Write a Dockerfile for the pipeline.
-- Add both services to `docker-compose.yml` and verify the stack together.
+- Copy the corrected `pipeline.py` into the project (`main()`'s call order
+  fix, written and `mypy --strict` clean) and re-run the pipeline to confirm
+  the state and HCPCS summary steps return to roughly their old benchmarks
+  (under 5 minutes each).
 - Add structured logging to the API. The pipeline already uses `logging`; the
   API does not log anything yet.
 - Extend `/health` to confirm the database connection rather than only reporting
   that the process is alive.
-- Write the README, including the CMS suppression-by-omission finding, the
-  `"XX"` state code, plus record counts and query timings.
+- Push the repository to GitHub. Verify `.gitignore` excludes `data/`,
+  `*.parquet`, `.env`, `.venv/`, and the cache folders before the first commit.
+- README written (`README.md`), covering architecture, data source, setup
+  steps, the CMS suppression-by-omission finding, the `"XX"` state code, and
+  record counts and query timings. Needs the `<repo-url>` placeholder
+  filled in and a read-through.

@@ -1,0 +1,15 @@
+# Runtime dependencies for the FastAPI service (Dockerfile.api). Deliberately
+# excludes duckdb/polars — the API only ever queries the pre-aggregated
+# Postgres summary tables through SQLAlchemy, never the pipeline's DuckDB
+# processing layer.
+
+fastapi==0.141.1
+pydantic==2.13.4
+uvicorn==0.52.3
+python-dotenv==1.2.2
+
+# app/database.py depends on both of these, but they weren't in the original
+# requirements.txt at all. Left unpinned until the exact versions already
+# proven to work in your local .venv are confirmed — see the note in chat.
+sqlalchemy[asyncio]==2.0.52
+asyncpg==0.31.0

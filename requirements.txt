@@ -1,10 +1,15 @@
-fastapi==0.141.1 
-pydantic==2.13.4 
-uvicorn==0.52.3
+# Full local install: both services combined, for running the API and the
+# pipeline from one .venv without Docker. The containers use the leaner
+# requirements-api.txt / requirements-pipeline.txt instead, so the API image
+# never pulls in DuckDB and the pipeline image never pulls in FastAPI/SQLAlchemy.
 
-duckdb==1.5.5
-polars==1.43.2
-python-dotenv==1.2.2
+-r requirements-api.txt
+-r requirements-pipeline.txt
 
+# Not imported by pipeline.py, and presumably not by app/database.py or
+# app/main.py either, going by what's been shared this session. Kept here
+# rather than in the split files above in case inspect_csv.py,
+# export_cleaned.py, or the tests rely on one of them.
 numpy==2.5.2
 pandas==3.0.5
+polars==1.43.2

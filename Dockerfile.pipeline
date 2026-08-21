@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1
+
+# --- Build stage: install dependencies into an isolated venv --------------
+FROM python:3.12-slim-bookworm AS builder
+
+WORKDIR /build
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements-pipeline.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements-pipeline.txt
+
+# --- Runtime stage: only the venv and ingestion code -----------------------
+FROM python:3.12-slim-bookworm AS runtime
+
+RUN groupadd --gid 1000 pipeline \
+    && useradd --uid 1000 --gid pipeline --shell /usr/sbin/nologin --create-home pipeline
+ENV HOME=/home/pipeline
+
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+COPY --chown=pipeline:pipeline ingestion/ ./ingestion/
+
+RUN mkdir -p /data && chown pipeline:pipeline /data
+VOLUME ["/data"]
+
+USER pipeline
+
+# Pre-fetch DuckDB's postgres extension at build time. Without this, the
+# first ATTACH ... (TYPE POSTGRES) call at runtime tries to download it from
+# DuckDB's extension repository, so the container would need outbound
+# internet access beyond just reaching the postgres service on the compose
+# network. main() already runs this exact statement (pipeline.py line 309);
+# running it now just primes the cache under this user's HOME so runtime
+# reads it instead of fetching it fresh.
+RUN python -c "import duckdb; duckdb.connect().execute('INSTALL postgres; LOAD postgres;')"
+
+# claim_year comes from CLAIM_YEAR_DIR / CSV_FILENAME (see docker-compose.yml),
+# not a CLI flag — main() reads both from the environment.
+CMD ["python", "-m", "ingestion.pipeline"]

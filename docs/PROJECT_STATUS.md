@@ -76,17 +76,25 @@ FastAPI serves them. Everything runs under Docker Compose.
 
 - [X] Rewrite `ingestion/export_cleaned.py` as a wrapper around
       `export_cleaned_parquet`, with an optional year argument
-- [ ] Write a Dockerfile for the API (pinned base image, non-root user)
-- [ ] Write a Dockerfile for the pipeline
-- [ ] Build locally — Integrated Terminal or PowerShell, project root, Docker Desktop running:
-  ```powershell
-  docker build -t providerpulse-api -f Dockerfile.api .
-  ```
-- [ ] Add both services to `docker-compose.yml` alongside Postgres
-- [ ] Bring the whole stack up and confirm the API answers from inside a container:
-  ```powershell
-  docker compose up --build
-  ```
+- [X] Write a Dockerfile for the API (pinned base image, non-root user).
+      Confirmed via `docker compose up --build`: two-stage build on
+      `python:3.12-slim-bookworm`, runs as non-root `appuser`, Docker's own
+      `HEALTHCHECK` passing repeatedly against `/health`
+- [X] Write a Dockerfile for the pipeline. Confirmed via
+      `docker compose run --rm pipeline` against a real 2023 reload: image
+      built, the DuckDB extension pre-fetch worked, and final counts matched
+      exactly (`cleaned_claims` 19,442,320; `summary_by_state` 124;
+      `summary_by_hcpcs` 12,876). Very slow, about 3h19m total, for a reason
+      unrelated to the container itself; see the new Stage 6 item and
+      CHANGELOG.md
+- [X] Build locally. `docker compose up --build` (Integrated Terminal,
+      project root, Docker Desktop running) built the API image
+      successfully as part of bringing up the full stack
+- [X] Add both services to `docker-compose.yml` alongside Postgres
+- [X] Bring the whole stack up and confirm the API answers from inside a
+      container. Confirmed via `GET /claims/summary/by-state?state=CA`
+      returning 200 against the already-loaded 2023/2024 data, from inside
+      the `providerpulse-api` container
 
 ## Stage 6 — Hardening and write-up
 
@@ -100,14 +108,22 @@ FastAPI serves them. Everything runs under Docker Compose.
       pipeline, models, and schemas.
 - [X] Add `ANALYZE` after the bulk load, so Postgres's query planner has
       current statistics before the summary rebuild runs against it
+- [ ] Fix `main()`'s call order. `analyze_cleaned_claims()` currently runs
+      after both summary rebuilds instead of before them, so the statistics
+      refresh never helps the run it's part of. Confirmed cost on the last
+      real run: HCPCS summary took 80m49s instead of a 4m55s benchmark.
+      Corrected `main()` written and passes `mypy --strict`; still needs to
+      be copied into the project and confirmed with a fresh timed run before
+      this is checked off for real.
 - [ ] Add structured logging to the API. The pipeline already uses `logging`;
       the API logs nothing.
 - [ ] Add a `/health` check that confirms the database connection, not just the process
 - [ ] Push the repository to GitHub. Confirm `.gitignore` excludes `data/`,
       `*.parquet`, `.env`, `.venv/`, and the cache folders before the first commit.
-- [ ] Write the README: architecture, data source, setup steps, the CMS
+- [X] Write the README: architecture, data source, setup steps, the CMS
       suppression-by-omission finding, the `"XX"` state code, plus record
-      counts and query timings
+      counts and query timings. One placeholder to fill in yourself:
+      `<repo-url>` in the clone command.
 
 ## Deferred
 

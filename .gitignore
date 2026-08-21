@@ -218,9 +218,3 @@ __marimo__/
 .streamlit/secrets.toml
 
 data/
-data.txt
-requirements-dev.txt
-
-polars_csv.py
-duckdb_csv.py
-export_cleaned.py

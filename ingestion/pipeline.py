@@ -477,6 +477,14 @@ def run_pipeline(
     """Load the configured year and rebuild the summaries. Returns table row counts.
 
     Counts cover every loaded year, not only the year just processed.
+
+    Note: main() does not call this directly. It calls the same stage
+    functions itself, in the same order, with analyze_cleaned_claims()
+    inserted between the load and the summary rebuilds, which this function
+    does not do. This function stays as written for the test suite's
+    full-pipeline exercise, which runs against an in-memory DuckDB with no
+    live Postgres attached, so analyze_cleaned_claims() (Postgres-only) was
+    never callable from inside it anyway.
     """
     claim_year = claim_year_from_path(config.csv_path)
 
@@ -500,12 +508,20 @@ def main() -> None:
 
     config = PipelineConfig.from_env()
     settings = PostgresSettings.from_env()
+    claim_year = claim_year_from_path(config.csv_path)
 
     con: duckdb.DuckDBPyConnection = duckdb.connect()
     try:
         attach_postgres(con, settings, config.schema)
-        counts = run_pipeline(con, config)
+        convert_csv_to_parquet(con, config.csv_path, config.parquet_path)
+        load_cleaned_claims(con, config.parquet_path, claim_year, config.schema)
         analyze_cleaned_claims(con, config.schema)
+        create_summary_by_state(con, config.schema)
+        create_summary_by_hcpcs(con, config.schema)
+        export_cleaned_parquet(
+            con, config.cleaned_parquet_path, config.schema, claim_year=claim_year
+        )
+        counts = table_row_counts(con, PIPELINE_TABLES, config.schema)
         per_year = rows_by_claim_year(con, config.schema)
     finally:
         con.close()
