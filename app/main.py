@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, Query, Response
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db, pg_db, pg_host, pg_port
+from app.database import engine, get_db, pg_db, pg_host, pg_port
 from app.models import SummaryByHcpcs, SummaryByState
 from app.schemas import HcpcsSummary, StateSummary
 
@@ -56,6 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pg_db,
     )
     yield
+    await engine.dispose()
     logger.info("ProviderPulse API shutting down")
 
 

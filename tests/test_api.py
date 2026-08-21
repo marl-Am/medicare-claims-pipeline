@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 from app.database import get_db
-from app.main import app
+from app.main import MAX_CLAIM_YEAR, MIN_CLAIM_YEAR, app
 from app.models import Base, SummaryByHcpcs, SummaryByState
 
 # Two years of data so the year filter has something to separate. The "XX"
@@ -107,6 +107,18 @@ HCPCS_ROWS: list[dict[str, Any]] = [
         "total_beneficiaries": 14100,
         "total_services": 30500.0,
         "total_medicare_payment": 1690000.0,
+    },
+    # A Level II code, stored uppercase as CMS publishes it. The all-numeric
+    # codes above cannot exercise the endpoint's .upper() call, since their
+    # casing is already invariant.
+    {
+        "claim_year": 2024,
+        "hcpcs_code": "J1885",
+        "hcpcs_description": "Ketorolac tromethamine injection",
+        "row_count": 210,
+        "total_beneficiaries": 6200,
+        "total_services": 14800.0,
+        "total_medicare_payment": 88400.0,
     },
 ]
 
@@ -299,11 +311,16 @@ async def test_hcpcs_code_and_year_filters_combine(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_hcpcs_filter_uppercases_the_code(client: AsyncClient) -> None:
-    """Level II codes carry a letter prefix (G0008, J1885) and are uppercase in
-    the source data, so a lowercase query still has to match."""
-    response = await client.get(HCPCS_URL, params={"hcpcs_code": "99213"})
-    assert len(response.json()) == 2
+@pytest.mark.parametrize("supplied_code", ["j1885", "J1885"])
+async def test_hcpcs_filter_uppercases_the_code(
+    client: AsyncClient, supplied_code: str
+) -> None:
+    """Level II codes carry a letter prefix and are uppercase in the source
+    data, so a lowercase query still has to match."""
+    response = await client.get(HCPCS_URL, params={"hcpcs_code": supplied_code})
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["hcpcs_code"] == "J1885"
 
 
 @pytest.mark.asyncio
@@ -368,6 +385,13 @@ async def test_rejection_names_the_offending_parameter(client: AsyncClient) -> N
     response = await client.get(STATE_URL, params={"state": "CALIFORNIA"})
     detail = response.json()["detail"]
     assert any("state" in entry["loc"] for entry in detail)
+
+
+def test_year_bounds_are_pinned() -> None:
+    """These constants are deliberately duplicated in ingestion/pipeline.py
+    rather than imported, so the API image need not depend on the ingestion
+    package. Pinning the literals on both sides makes a one-sided edit fail."""
+    assert (MIN_CLAIM_YEAR, MAX_CLAIM_YEAR) == (1990, 2100)
 
 
 @pytest.mark.asyncio

@@ -56,7 +56,16 @@ Create a `.env` file in the project root (git-ignored) with:
 |---|---|
 | `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DB` | Postgres connection |
 | `DATA_ROOT`, `CLAIM_YEAR_DIR`, `CSV_FILENAME` | Where the pipeline finds the year's CSV |
+| `PG_SCHEMA` | DuckDB's alias for the attached Postgres catalog (optional, defaults to `pg`) |EAR_DIR`, `CSV_FILENAME` | Where the pipeline finds the year's CSV |
 | `API_PORT` | Host port for the API (optional, defaults to 8000) |
+
+Create the Postgres data volume. It's declared `external` in
+`docker-compose.yml` so `docker compose down -v` cannot destroy a loaded
+database, which also means Compose won't create it for you:
+
+```powershell
+docker volume create pg-medicare-data
+```
 
 Bring up Postgres and the API:
 
@@ -72,7 +81,9 @@ docker compose run --rm pipeline
 
 `CLAIM_YEAR_DIR` and `CSV_FILENAME` control which year loads. Loading is
 delete-then-insert per year, so re-running a year is safe and a second year
-appends rather than overwriting the first.
+appends rather than overwriting the first. Replacing a CSV and re-running
+rebuilds its Parquet rather than reusing the stale one, so a corrected
+download takes effect without any manual cleanup.
 
 ## API
 
@@ -134,7 +145,7 @@ pytest
 mypy --strict .
 ```
 
-89 tests across the pipeline and the API, in-memory DuckDB for the pipeline
+91 tests across the pipeline and the API, in-memory DuckDB for the pipeline
 tests and in-memory SQLite for the API tests, so neither suite needs a live
 Postgres connection.
 

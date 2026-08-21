@@ -1,9 +1,17 @@
--r requirements.txt
+# Everything needed to run both services locally from one .venv, plus the
+# test and type-checking tools. The two container images install their own
+# split file instead, so the API image never carries DuckDB, the pipeline
+# image never carries FastAPI, and neither carries any of the dev tools.
 
-# --- Testing ---
+-r requirements-api.txt
+-r requirements-pipeline.txt
+
+# --- Testing and type checking ---
 mypy==2.3.0
 pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1
 
-httpx==0.28.2
-pytest-asyncio==0.22.0
+# tests/test_api.py runs the endpoints against sqlite+aiosqlite:///:memory:
+# rather than a live Postgres, so this is a test-only dependency.
 aiosqlite==0.18.0

@@ -61,6 +61,8 @@ FastAPI serves them. Everything runs under Docker Compose.
       load works unchanged.
 - [X] Switch `cleaned_claims` from `CREATE OR REPLACE TABLE` to delete-then-insert
       on `claim_year`, so a second year appends and a re-run stays idempotent.
+      (Qualified in Stage 7: idempotent with respect to the Parquet, not the
+      CSV, until `convert_csv_to_parquet` was fixed.)
       `raw_claims` was dropped rather than made appendable — nothing queried it,
       and it doubled storage for no benefit once `cleaned_claims` reads straight
       from Parquet.
@@ -116,8 +118,10 @@ FastAPI serves them. Everything runs under Docker Compose.
       the first summary rebuild, exactly where it belongs.
 - [X] Add structured logging to the API. `main.py` now logs on startup and
       shutdown, and after every query, the filters applied and rows
-      returned. Verified with `mypy --strict` against the real installed
-      `sqlalchemy`/`asyncpg`, no live test needed for this half.
+      returned. Verified with `mypy --strict`, though see Stage 7: that
+      check was resolving packages from an unrelated project's venv at the
+      time, so it was re-run against a clean environment before this was
+      considered settled.
 - [X] Add a `/health` check that confirms the database connection, not just
       the process. Runs a real `SELECT 1` through `get_db()`; verified live
       against an unreachable database, correctly returns 503 with a generic
@@ -130,6 +134,69 @@ FastAPI serves them. Everything runs under Docker Compose.
       suppression-by-omission finding, the `"XX"` state code, plus record
       counts and query timings. One placeholder to fill in yourself:
       `<repo-url>` in the clone command.
+
+## Stage 7 — Audit against an LLM-code checklist
+
+Reviewed every source file against `docs/signs-of-llm-generated-code.md`.
+The checklist's main tells were absent: no placeholders, no `cast`/
+`type: ignore`/`Any` in source, no invented APIs, no silent error
+swallowing. What it did surface were two data-correctness defects and a
+broken local environment.
+
+- [X] Fix `convert_csv_to_parquet` reusing a stale Parquet. Replacing a CSV
+      and re-running was a silent no-op: the conversion skipped because the
+      Parquet existed, so delete-then-insert reloaded the previous file's
+      rows and logged an ordinary success. Now compares mtimes and rebuilds
+      when the Parquet predates its CSV. Reproduced before the fix: a
+      1-row load, CSV replaced with 3 rows, re-run left the database at 1.
+- [X] Switch `build_insert_cleaned_claims_sql` to `INSERT ... BY NAME`.
+      The positional insert loaded values by column position against a
+      table created from the first year's file. Reproduced: two years with
+      identical columns in a different order put the HCPCS description into
+      the `state` column with no error, because both are VARCHAR. A
+      differing type does fail loudly, which is why the real 2023/2024 load
+      was unaffected. `BY NAME` fixes the reorder case and still rejects a
+      genuinely new column.
+- [X] Add `await engine.dispose()` to the API's `lifespan` shutdown. The
+      connection pool was left open on exit.
+- [X] Add `app/__init__.py`. Without it mypy mapped `app/database.py` to
+      both `database` and `app.database` and refused to check anything.
+      `mypy --strict .` now reports 12 source files.
+- [X] Replace `test_hcpcs_filter_uppercases_the_code`, which tested nothing.
+      Every fixture code was all digits and therefore case-invariant, so
+      the endpoint's `.upper()` had no coverage. Added a `J1885` row and
+      parametrized over both casings. Also removed
+      `test_max_claim_year_is_a_sane_upper_bound`, which asserted
+      `2100 > 2024` and could not fail.
+- [X] Pin `MIN_CLAIM_YEAR`/`MAX_CLAIM_YEAR` in both test files. The
+      constants are deliberately duplicated across `app/` and `ingestion/`,
+      but nothing guarded against the two copies drifting apart.
+- [X] Consolidate the requirements files from four to three. `requirements.txt`
+      only combined the two split lists, which `requirements-dev.txt` can do
+      directly. Deleted `numpy`, `pandas`, and `polars`: no module in the
+      project imports any of them.
+- [X] Fix two dependency pins that could never have resolved.
+      `httpx==0.28.2` does not exist on PyPI, and `pytest-asyncio==0.22.0`
+      is incompatible with the `pytest==9.1.1` pinned three lines above it
+      (pytest 9 removed `FixtureDef.unittest`, which that version reads).
+      Both went unnoticed because the packages were already present.
+- [X] Remove `docker-rag-assistant\.venv\Scripts` from the user `PATH`.
+      A sibling project's venv was on `PATH` permanently, so bare `pytest`
+      and `mypy` calls in this project silently resolved packages from it.
+      The evidence: the suite reported `pytest-asyncio 1.4.0` while this
+      project pinned 0.22.0, meaning it had never once run against its own
+      pinned version.
+- [X] Rebuild `.venv` from scratch and re-verify. 91 tests pass and
+      `mypy --strict .` reports no issues across 12 source files, with
+      `sqlalchemy`, `duckdb`, and `asyncpg` all confirmed importing from
+      this project's own site-packages.
+- [X] Document the external `pg-medicare-data` volume in the README.
+      Declared `external: true` so `docker compose down -v` cannot destroy
+      a loaded database, which also means Compose will not create it and a
+      fresh clone failed before Postgres started.
+- [X] Strip conversational artifacts from the requirements comments
+      ("see the note in chat", "going by what's been shared this session"),
+      and correct one that described two pinned lines as unpinned.
 
 ## Deferred
 

@@ -18,6 +18,7 @@ import pytest
 
 from ingestion.pipeline import (
     MAX_CLAIM_YEAR,
+    MIN_CLAIM_YEAR,
     PipelineConfig,
     PostgresSettings,
     build_analyze_sql,
@@ -670,8 +671,11 @@ def test_full_run_rejects_a_year_folder_it_cannot_parse(
         run_pipeline(con, config_for(root, csv_path))
 
 
-def test_max_claim_year_is_a_sane_upper_bound() -> None:
-    assert MAX_CLAIM_YEAR > TEST_YEAR
+def test_year_bounds_are_pinned() -> None:
+    """Matched by an identical assertion in tests/test_api.py, against the
+    separate copy in app/main.py. The duplication is deliberate; this pins
+    both sides so they cannot drift apart unnoticed."""
+    assert (MIN_CLAIM_YEAR, MAX_CLAIM_YEAR) == (1990, 2100)
 
 
 # ---------------------------------------------------------------------------
