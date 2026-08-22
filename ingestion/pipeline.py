@@ -120,6 +120,7 @@ class PostgresSettings:
     database: str
     user: str
     password: str
+    sslmode: str | None = None
 
     @classmethod
     def from_env(cls) -> PostgresSettings:
@@ -140,6 +141,8 @@ class PostgresSettings:
             ("host", self.host),
             ("port", self.port),
         ]
+        if self.sslmode is not None:
+            fields.append(("sslmode", self.sslmode))
         return " ".join(f"{key}={quote_dsn_value(value)}" for key, value in fields)
 
     def __repr__(self) -> str:

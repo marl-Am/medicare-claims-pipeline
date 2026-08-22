@@ -36,6 +36,9 @@ USER appuser
 
 EXPOSE 8000
 
-# Shell form, not exec form: ${PORT:-8000} only expands under a shell.
-# Vercel is expected to set PORT itself; 8000 only matters if it doesn't.
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Absolute path, not a bare "uvicorn": sidesteps PATH resolution entirely
+# rather than depending on Vercel's container runtime applying this image's
+# ENV PATH the same way `docker run` does. Confirmed via build logs that
+# uvicorn installs correctly to /opt/venv/bin; the prior failure was PATH
+# lookup at runtime not finding it there, not the binary being absent.
+CMD /opt/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
