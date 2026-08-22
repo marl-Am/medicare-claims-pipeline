@@ -3,6 +3,7 @@
 # image, out of what gets sent to the Docker daemon at all.
 
 .env
+.env.example
 .venv/
 .git/
 .gitignore

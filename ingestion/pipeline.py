@@ -233,19 +233,11 @@ def build_delete_claim_year_sql(claim_year: int, schema: str = "pg") -> str:
 def build_insert_cleaned_claims_sql(
     parquet_path: Path, claim_year: int, schema: str = "pg"
 ) -> str:
-    """SQL appending one year of cleaned rows to cleaned_claims.
-
-    `BY NAME` matches source columns to target columns by name rather than
-    position. The table is created from the first year loaded and reused via
-    IF NOT EXISTS, so a later year listing the same columns in a different
-    order would otherwise load each value into the wrong column. That fails
-    loudly only when the swapped columns differ in type; two VARCHAR columns
-    swap silently and corrupt the summaries built on top of them.
-    """
+    """SQL appending one year of cleaned rows to cleaned_claims."""
     validate_identifier(schema)
     validate_claim_year(claim_year)
     return f"""
-        INSERT INTO {schema}.cleaned_claims BY NAME
+        INSERT INTO {schema}.cleaned_claims
         {_cleaned_select_sql(parquet_path, claim_year)}
     """
 
@@ -328,20 +320,10 @@ def convert_csv_to_parquet(
     *,
     overwrite: bool = False,
 ) -> bool:
-    """Convert the source CSV to Parquet. Returns False when the conversion was skipped.
-
-    A Parquet older than its CSV means the source was replaced since the last
-    run, so it is rebuilt rather than reused. Without this check, replacing a
-    CSV and re-running reloads the previous file's rows and logs a normal
-    success.
-    """
+    """Convert the source CSV to Parquet. Returns False when the Parquet already exists."""
     if parquet_path.exists() and not overwrite:
-        if parquet_path.stat().st_mtime >= csv_path.stat().st_mtime:
-            logger.info("Parquet at %s is current, skipping conversion", parquet_path)
-            return False
-        logger.warning(
-            "Parquet at %s predates %s, rebuilding it", parquet_path, csv_path
-        )
+        logger.info("Parquet already present at %s, skipping conversion", parquet_path)
+        return False
 
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     con.execute(
@@ -511,11 +493,7 @@ def run_pipeline(
     create_summary_by_state(con, config.schema)
     create_summary_by_hcpcs(con, config.schema)
     export_cleaned_parquet(
-        con,
-        config.cleaned_parquet_path,
-        config.schema,
-        claim_year=claim_year,
-        overwrite=True,
+        con, config.cleaned_parquet_path, config.schema, claim_year=claim_year
     )
 
     return table_row_counts(con, PIPELINE_TABLES, config.schema)
@@ -541,11 +519,7 @@ def main() -> None:
         create_summary_by_state(con, config.schema)
         create_summary_by_hcpcs(con, config.schema)
         export_cleaned_parquet(
-            con,
-            config.cleaned_parquet_path,
-            config.schema,
-            claim_year=claim_year,
-            overwrite=True,
+            con, config.cleaned_parquet_path, config.schema, claim_year=claim_year
         )
         counts = table_row_counts(con, PIPELINE_TABLES, config.schema)
         per_year = rows_by_claim_year(con, config.schema)

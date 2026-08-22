@@ -43,7 +43,7 @@ with identical row counts and columns.
 Prerequisites: Python 3.11+, Docker Desktop, Git.
 
 ```powershell
-git clone <repo-url>
+git clone https://github.com/marl-Am/medicare-claims-pipeline
 cd medicare-claims-pipeline
 python -m venv .venv
 .venv\Scripts\Activate.ps1
@@ -56,7 +56,7 @@ Create a `.env` file in the project root (git-ignored) with:
 |---|---|
 | `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DB` | Postgres connection |
 | `DATA_ROOT`, `CLAIM_YEAR_DIR`, `CSV_FILENAME` | Where the pipeline finds the year's CSV |
-| `PG_SCHEMA` | DuckDB's alias for the attached Postgres catalog (optional, defaults to `pg`) |EAR_DIR`, `CSV_FILENAME` | Where the pipeline finds the year's CSV |
+| `PG_SCHEMA` | DuckDB's alias for the attached Postgres catalog (optional, defaults to `pg`) |
 | `API_PORT` | Host port for the API (optional, defaults to 8000) |
 
 Create the Postgres data volume. It's declared `external` in
@@ -81,9 +81,11 @@ docker compose run --rm pipeline
 
 `CLAIM_YEAR_DIR` and `CSV_FILENAME` control which year loads. Loading is
 delete-then-insert per year, so re-running a year is safe and a second year
-appends rather than overwriting the first. Replacing a CSV and re-running
-rebuilds its Parquet rather than reusing the stale one, so a corrected
-download takes effect without any manual cleanup.
+appends rather than overwriting the first. Replacing a CSV does *not*
+automatically rebuild its Parquet: `convert_csv_to_parquet` skips conversion
+whenever a Parquet file already exists at that path, checking only whether
+the file is present, not whether the CSV underneath it changed. A corrected
+download needs the old Parquet file deleted first.
 
 ## API
 

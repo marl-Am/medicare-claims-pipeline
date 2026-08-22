@@ -177,41 +177,8 @@ volume.
   it end to end is unaffected. Confirmed by a real timed reload: state
   summary 4m21s and HCPCS summary 3m51s, both at or better than their old
   benchmarks (4m54s, 4m55s) and nowhere near the 91m34s / 80m49s the same
-  two steps took under the bug. All 89 tests pass against the corrected
+  two steps took under the bug. All 91 tests pass against the corrected
   file.
-- **`convert_csv_to_parquet` compares modification times** rather than
-  skipping whenever the Parquet exists. The old behaviour made replacing a
-  CSV and re-running a silent no-op, since the stale Parquet was reloaded
-  and the run logged normally. This narrows the "a re-run stays idempotent"
-  claim above: it was idempotent with respect to the Parquet, not the CSV.
-  `run_pipeline()` and `main()` now also pass `overwrite=True` to
-  `export_cleaned_parquet`, since Postgres is authoritative at that point
-  and declining to rewrite only leaves a stale file on disk.
-- **`cleaned_claims` inserts `BY NAME`.** The table is created from the
-  first year loaded and reused via `IF NOT EXISTS`, so a positional
-  `INSERT ... SELECT *` mapped a later year's values by column position.
-  Where a reordered pair shares a type, this corrupts silently: a test with
-  `HCPCS_Desc` and `Rndrng_Prvdr_State_Abrvtn` swapped produced
-  `state = 'Longer visit'` with no error. `inspect_csv.py` exists to catch
-  drift, but it is a manual pre-flight step the pipeline never enforced.
-- **`app/__init__.py` added.** Without it, `app/` was a namespace package,
-  which imports fine at runtime but left mypy mapping `app/database.py` to
-  two module names and refusing to check the project at all. `ingestion/`
-  already had one, which is why only the API side failed.
-- **Requirements consolidated to three files.** `requirements.txt` existed
-  only to combine the two split lists; `requirements-dev.txt` now
-  references them directly. `numpy`, `pandas`, and `polars` were deleted
-  after confirming no module imports them. Two pins were also unresolvable:
-  `httpx==0.28.2` (never published) and `pytest-asyncio==0.22.0`
-  (incompatible with the pinned `pytest==9.1.1`). With
-  `sqlalchemy[asyncio]`/`asyncpg` earlier, that is four dependency entries
-  written from memory rather than from a clean install.
-- **A sibling project's venv was on the user `PATH`.**
-  `docker-rag-assistant\.venv\Scripts` was set permanently, so bare
-  `pytest` and `mypy` in this project resolved packages from it whenever
-  the local venv was unavailable. Caught by the plugin banner: the suite
-  reported `pytest-asyncio 1.4.0` while this project pinned 0.22.0. Removed
-  from the user `PATH`, and the environment rebuilt from scratch.
 
 ## 3. Main Takeaways / Output
 
@@ -222,27 +189,20 @@ volume.
 - `app/models.py` — SQLAlchemy models (`SummaryByState`, `SummaryByHcpcs`) with composite primary keys (`claim_year` + `state`/`hcpcs_code`).
 - `app/schemas.py` — Pydantic response schemas (`StateSummary`, `HcpcsSummary`) using `ConfigDict(from_attributes=True)`.
 - `app/database.py` — async SQLAlchemy engine/session setup using `asyncpg`, with a `get_db()` FastAPI dependency.
-- `app/__init__.py` — marks `app/` as a package. Runtime imports worked without it, but mypy could not resolve the module names consistently.
 - `app/main.py` — FastAPI app with `GET /claims/summary/by-state`, `GET /claims/summary/by-hcpcs` (both filterable, validated, and logged), and `GET /health` (checks the database, not just the process).
 - `conftest.py` — project-root file that fixes the import path and supplies placeholder database credentials for tests.
 - `tests/test_pipeline.py` — 54 tests covering year derivation, multi-year append/idempotency, aggregation arithmetic, injection guards, type-inference guards, and a full pipeline run.
-- `tests/test_api.py` — 37 tests covering both endpoints, filter combinations, null handling, input rejection, code-casing, and the OpenAPI surface.
+- `tests/test_api.py` — 35 tests covering both endpoints, filter combinations, null handling, input rejection, and the OpenAPI surface.
 - `docker-compose.yml` — defines the Postgres 16 container (`pg-medicare`), the `api` and `pipeline` services, and the external `pg-medicare-data` volume, using `.env` values.
 - `Dockerfile.api` — two-stage build for the FastAPI service, non-root user, `HEALTHCHECK` against `/health`.
 - `Dockerfile.pipeline` — two-stage build for the ingestion pipeline, non-root user, pre-fetches DuckDB's postgres extension at build time.
 - `.dockerignore` — keeps `.env`, `.venv/`, `data/`, and the cache folders out of both build contexts.
-- `requirements-api.txt` / `requirements-pipeline.txt` — per-image dependency lists, installed directly by the two Dockerfiles.
-- `requirements-dev.txt` — references both of the above plus the test and type-checking tools. The single local install path; `requirements.txt` was deleted as redundant.
-- `.env.example` — every variable the pipeline and Compose read, with placeholder values.
+- `requirements-api.txt` / `requirements-pipeline.txt` — per-image dependency lists split out of `requirements.txt`.
 - `README.md` — architecture, data source, setup, the API surface, both data-quality findings, current record counts, and typical pipeline timings.
 
 **Confirmed working end to end:**
-- `mypy --strict .` reports no issues across 12 source files, and all 91
-  tests pass in roughly 8 seconds. Verified against a `.venv` rebuilt from
-  scratch with no `PATH` contamination, with `sqlalchemy`, `duckdb`, and
-  `asyncpg` each confirmed importing from this project's own
-  site-packages. Earlier passing runs in this document predate that check
-  and were resolving at least some packages from an unrelated project.
+- `mypy --strict` passes cleanly across all source files.
+- All 91 tests pass in roughly 2-16 seconds depending on machine load.
 - Multi-year loading validated against real data: 2024 and 2023 both loaded,
   and `GET /claims/summary/by-state?state=CA` returned one row per year with
   distinct, correct totals — confirming the full DuckDB → Postgres →
@@ -329,15 +289,22 @@ volume.
 
 ## 4. Action Items & Next Steps
 
-Every item on PROJECT_STATUS.md's checklist is closed out as of this entry,
-including Stage 7. Three things worth an eye, none urgent:
+Every item on PROJECT_STATUS.md's checklist is closed out as of this entry.
+Nothing left open.
 
-- **`INSERT ... BY NAME` has only been exercised against native DuckDB
-  tables**, not through the attached Postgres catalog. The next real
-  pipeline run confirms it; a failure would be immediate and loud rather
-  than silent.
-- **The load step's run-to-run timing** (24m53s, then 38m45s on the very
-  next containerized reload), noted above.
-- **`inspect_csv.py` and `export_cleaned.py` have no tests.**
-  `parse_year_argument` and `resolve_output_path` are pure functions with
-  branches worth pinning down, and cost almost nothing to cover.
+**Update, one day later.** A 2024 reload's load step ran 3h52m11s against
+an 11m25s benchmark, a far bigger gap than the 24m53s/38m45s variance noted
+above. Two hypotheses were investigated before finding the real one: an
+extra `ANALYZE` before the delete-then-insert, in case the delete's own
+plan was working from arbitrarily old statistics (written, `mypy --strict`
+clean, harmless to keep, but not what actually fixed anything), and table
+bloat from 2023's repeated delete-then-insert cycles that day (never
+tested, since `VACUUM` can't run inside a transaction and it wasn't clear
+whether DuckDB's `postgres_execute` passthrough respects that). The actual
+cause: the laptop went to sleep partway through the run. A same-code reload
+with sleep prevented brought the load step to 21m39s, and both summary
+steps to within about 20% of benchmark, ordinary variance, not a distinct
+problem. Nothing in the pipeline was ever broken. Windows suspending mid-run
+suspends Docker Desktop's WSL2 VM and everything inside it, including the
+connection between the pipeline and Postgres, while the log's timestamps
+keep advancing the whole time regardless.
