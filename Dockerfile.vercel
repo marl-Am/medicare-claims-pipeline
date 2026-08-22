@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1
+#
+# Vercel-specific: same image as Dockerfile.api, with the listening port
+# read from $PORT instead of hardcoded, since Vercel assigns the port a
+# container should bind to rather than using a fixed one. HEALTHCHECK is
+# left out here since it isn't clear Vercel's routing acts on it the way
+# Docker Compose's does; Dockerfile.api keeps it for that use.
+
+# --- Build stage: install dependencies into an isolated venv --------------
+FROM python:3.12-slim-bookworm AS builder
+
+WORKDIR /build
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements-api.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements-api.txt
+
+# --- Runtime stage: only the venv and app code, nothing used to build it --
+FROM python:3.12-slim-bookworm AS runtime
+
+RUN groupadd --gid 1000 appuser \
+    && useradd --uid 1000 --gid appuser --shell /usr/sbin/nologin --create-home appuser
+
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+COPY --chown=appuser:appuser app/ ./app/
+
+USER appuser
+
+EXPOSE 8000
+
+# Shell form, not exec form: ${PORT:-8000} only expands under a shell.
+# Vercel is expected to set PORT itself; 8000 only matters if it doesn't.
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
