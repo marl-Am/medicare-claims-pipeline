@@ -1,5 +1,7 @@
 # ProviderPulse
 
+**Live:** https://medicare-claims-pipeline-six.vercel.app
+
 A data pipeline and query API for Medicare provider payment records. DuckDB
 processes the raw CSV into aggregated Parquet and Postgres tables, and
 FastAPI serves the aggregates over HTTP. Everything runs under Docker
@@ -118,6 +120,12 @@ tell an impossible query from one with no matching data.
 - **`total_medicare_payment` is calculated**, not a raw column:
   `Avg_Mdcr_Pymt_Amt * Tot_Srvcs`. The source file only provides per-service
   averages, not row-level totals.
+- **`total_beneficiaries` and `total_services` are sums, not headcounts.**
+  The source data counts a beneficiary once per (provider, HCPCS code)
+  combination they were involved in, so someone seen by three providers for
+  five different services in a year is counted several times over. State
+  and national totals will run far higher than the number of actual people,
+  that's expected, not a bug.
 
 ## Current data
 

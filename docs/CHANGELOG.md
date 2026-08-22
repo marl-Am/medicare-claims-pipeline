@@ -308,3 +308,51 @@ problem. Nothing in the pipeline was ever broken. Windows suspending mid-run
 suspends Docker Desktop's WSL2 VM and everything inside it, including the
 connection between the pipeline and Postgres, while the log's timestamps
 keep advancing the whole time regardless.
+
+## 5. Deployment (Vercel + Neon)
+
+Live at https://medicare-claims-pipeline-six.vercel.app. API on Vercel
+(Container preset, `Dockerfile.vercel`), database on Neon. Render was the
+original plan for the API; switched to Vercel once its container support
+was confirmed and its free tier's CPU-time billing turned out to fit this
+project's mostly-I/O-bound workload well. Render's free Postgres was ruled
+out early regardless, it expires 30 days after creation; Neon's free tier
+is permanent.
+
+Only `summary_by_state` and `summary_by_hcpcs` live on Neon.
+`cleaned_claims` stays local; the deployed API never queries it, and its
+full size would exceed Neon's free-tier storage limit regardless.
+
+- **New: `ingestion/sync_summaries_to_neon.py`.** Attaches local Postgres
+  and Neon as separate DuckDB catalogs in one session and copies the two
+  summary tables across directly, reusing `attach_postgres` and
+  `PostgresSettings` unchanged. Reads Neon's credentials from a separate
+  `NEON_*` set of variables, so they can't collide with the `PG_*` ones
+  used for local Postgres.
+- **`PostgresSettings` gained an optional `sslmode` field**, defaulting to
+  `None` so `from_env()` and local Postgres are unaffected. Neon requires
+  TLS on every connection; the sync script sets `sslmode="require"`
+  explicitly when building Neon's settings.
+- **`app/database.py` gained a `PG_SSL` flag**, same reasoning: off by
+  default, set to `true` only in Vercel's environment variables, passed to
+  asyncpg via `connect_args={"ssl": True}` rather than a URL query
+  parameter, since it was not confirmed that asyncpg accepts every
+  libpq-style query parameter through SQLAlchemy's URL parsing.
+- **`Dockerfile.vercel` created**, same image as `Dockerfile.api`, with the
+  listening port read from `$PORT` rather than hardcoded, since Vercel
+  assigns the port rather than using a fixed one.
+- **Found: Vercel's container runtime does not reliably apply the image's
+  own `ENV PATH`.** First deploy crashed on every request with
+  `/bin/sh: 1: uvicorn: not found`, exit code 127. Build logs confirmed
+  `uvicorn` installed correctly to `/opt/venv/bin` during the build and the
+  venv copied into the runtime stage without error, ruling out a missing
+  dependency. Fix: `CMD` calls `/opt/venv/bin/uvicorn` by absolute path
+  instead of a bare `uvicorn`, which skips `PATH` lookup entirely rather
+  than depending on Vercel's runtime honoring the image's `PATH` the way
+  `docker run` does.
+- **Confirmed live and correct.** `/health` returns `200`, and
+  `GET /claims/summary/by-state?state=CA` returns distinct 2023 and 2024
+  rows against the real Neon-hosted data, both years showing the same
+  year-over-year growth pattern already documented for the pipeline's own
+  totals, and row counts consistent with California's share of the
+  62-state average.
